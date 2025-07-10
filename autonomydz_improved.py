@@ -722,6 +722,18 @@ Please enhance the code to include the requested features and improve the overal
             return
             
         try:
+            # Clean up any existing git lock files
+            git_dir = project_path / ".git"
+            if git_dir.exists():
+                lock_files = [
+                    git_dir / "index.lock",
+                    git_dir / "config.lock",
+                    git_dir / "HEAD.lock"
+                ]
+                for lock_file in lock_files:
+                    if lock_file.exists():
+                        lock_file.unlink()
+            
             # Initialize git
             await asyncio.create_subprocess_exec(
                 "git", "init",
@@ -782,13 +794,13 @@ coverage/
                         "git", "branch", "-M", "main",
                         cwd=project_path
                     )
-                    await asyncio.create_subprocess_exec(
-                        "git", "push", "-u", "origin", "main",
-                        cwd=project_path
-                    )
-                    logger.info(f"🚀 Pushed to {config.repo_url}")
+                    # Skip push to avoid authentication issues in RunPod
+                    logger.info(f"📝 Repository configured for {config.repo_url}")
+                    logger.info("💡 To push manually: git push -u origin main")
                 except Exception as e:
-                    logger.warning(f"Failed to push to remote: {e}")
+                    logger.warning(f"Failed to configure remote: {e}")
+            else:
+                logger.info("📚 Local git repository ready")
                     
         except Exception as e:
             logger.error(f"Git setup failed: {e}")
@@ -827,6 +839,18 @@ coverage/
     async def conversational_loop(self):
         """Main conversational loop."""
         try:
+            # Clean up any existing git lock files in the main directory
+            main_git_dir = Path.cwd() / ".git"
+            if main_git_dir.exists():
+                lock_files = [
+                    main_git_dir / "index.lock",
+                    main_git_dir / "config.lock",
+                    main_git_dir / "HEAD.lock"
+                ]
+                for lock_file in lock_files:
+                    if lock_file.exists():
+                        lock_file.unlink()
+            
             # Gather requirements
             config = await self.gather_requirements()
             self.current_config = config
