@@ -1,0 +1,75 @@
+{
+  "name": "autonomybot-ultra-runpod",
+  "version": "2.0.0",
+  "description": "RunPod optimized conversational coding agent",
+  "main": "autonomydz_improved.py",
+  "requirements": {
+    "gpu": {
+      "min_vram": "16GB",
+      "recommended_vram": "24GB",
+      "optimal_vram": "48GB"
+    },
+    "cpu": {
+      "min_cores": 4,
+      "recommended_cores": 8
+    },
+    "memory": {
+      "min_ram": "8GB",
+      "recommended_ram": "16GB"
+    },
+    "storage": {
+      "min_space": "20GB",
+      "recommended_space": "50GB"
+    }
+  },
+  "models": {
+    "primary": [
+      "qwen2.5-coder:32b",
+      "qwen2.5-coder:14b",
+      "deepseek-coder:33b",
+      "deepseek-coder:6.7b",
+      "codellama:34b",
+      "codellama:13b"
+    ],
+    "fallback": [
+      "qwen2.5-coder:7b",
+      "codellama:7b"
+    ]
+  },
+  "supported_frameworks": [
+    "Next.js",
+    "React",
+    "Vite",
+    "Express",
+    "FastAPI",
+    "Flask",
+    "Vanilla HTML/CSS/JS"
+  ],
+  "features": [
+    "Async operations",
+    "Resource management",
+    "Model auto-selection",
+    "Git integration",
+    "Development server",
+    "Real-time code enhancement",
+    "Error recovery",
+    "Memory persistence",
+    "Container optimization",
+    "Multi-language support"
+  ],
+  "deployment": {
+    "platforms": ["RunPod", "Docker", "Local"],
+    "recommended_template": "RunPod Ollama Template",
+    "ports": {
+      "ollama": 11434,
+      "dev_server": 3000,
+      "alternative": 8080
+    }
+  },
+  "environment_variables": {
+    "OLLAMA_HOST": "0.0.0.0:11434",
+    "NODE_ENV": "development",
+    "WORKSPACE_DIR": "/workspace",
+    "PYTHONPATH": "/app"
+  }
+}

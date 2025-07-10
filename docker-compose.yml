@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  autonomybot:
+    build: .
+    ports:
+      - "11434:11434"  # Ollama API
+      - "3000:3000"    # Development server
+      - "8080:8080"    # Alternative port
+    volumes:
+      - ./workspace:/workspace
+      - ./memory:/app/memory
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - NODE_ENV=development
+      - WORKSPACE_DIR=/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  ollama_models:

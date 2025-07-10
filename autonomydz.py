@@ -1,0 +1,487 @@
+#!/usr/bin/env python3
+"""
+AutonomyBot Ultra - Next-Generation Conversational Coding Agent
+Builds, fixes, and explains modern web projects from prompts.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import time
+from pathlib import Path
+from typing import Dict, List, Optional, Any, Tuple
+import requests
+
+try:
+    from rich.console import Console
+    from rich.prompt import Prompt, Confirm
+    from rich.panel import Panel
+    from rich.table import Table
+except ImportError as e:
+    raise ImportError("[!] 'rich' library is required. Install with: pip install rich") from e
+
+# --- Memory/Context Management ---
+class BotMemory:
+    def __init__(self):
+        self.history: List[Dict[str, Any]] = []
+        self.project_context: Dict[str, Any] = {}
+        self.user_feedback: List[str] = []
+
+    def remember(self, key: str, value: Any):
+        self.project_context[key] = value
+
+    def recall(self, key: str, default=None):
+        return self.project_context.get(key, default)
+
+    def log(self, entry: Dict[str, Any]):
+        self.history.append(entry)
+
+    def add_feedback(self, feedback: str):
+        self.user_feedback.append(feedback)
+
+# --- Plugin System Scaffold ---
+class Plugin:
+    def __init__(self, name: str, description: str):
+        self.name = name
+        self.description = description
+    def apply(self, bot: 'AutonomyBotUltra', *args, **kwargs):
+        pass  # To be extended
+
+class PluginManager:
+    def __init__(self):
+        self.plugins: Dict[str, Plugin] = {}
+    def register(self, plugin: Plugin):
+        self.plugins[plugin.name] = plugin
+    def get(self, name: str) -> Optional[Plugin]:
+        return self.plugins.get(name)
+    def list_plugins(self):
+        return list(self.plugins.values())
+
+# --- GitHub Integration ---
+class GitHubInspiration:
+    def __init__(self, console: Console):
+        self.console = console
+    
+    def search_repositories(self, project_type: str, keywords: List[str]) -> List[Dict]:
+        """Search GitHub for relevant repositories for inspiration."""
+        self.console.print("[yellow]🔍 Searching GitHub for inspiration...[/yellow]")
+        try:
+            # Use GitHub API to search for repositories
+            query = f"{project_type} {' '.join(keywords)} language:javascript language:typescript"
+            url = f"https://api.github.com/search/repositories?q={query}&sort=stars&order=desc&per_page=10"
+            
+            response = requests.get(url)
+            if response.status_code == 200:
+                repos = response.json().get('items', [])
+                inspiration = []
+                for repo in repos[:5]:  # Top 5 repos
+                    inspiration.append({
+                        'name': repo['name'],
+                        'description': repo['description'],
+                        'stars': repo['stargazers_count'],
+                        'url': repo['html_url'],
+                        'topics': repo.get('topics', []),
+                        'language': repo['language']
+                    })
+                return inspiration
+            else:
+                self.console.print(f"[red]GitHub API error: {response.status_code}[/red]")
+                return []
+        except Exception as e:
+            self.console.print(f"[red]GitHub search failed: {e}[/red]")
+            return []
+
+# --- Git Repository Management ---
+class GitManager:
+    def __init__(self, console: Console):
+        self.console = console
+    
+    def setup_git_repository(self, project_path: Path, project_name: str, repo_url: Optional[str] = None):
+        """Initialize git repository and optionally push to GitHub."""
+        try:
+            original_dir = os.getcwd()
+            os.chdir(project_path)
+            
+            # Initialize git
+            subprocess.run(["git", "init"], check=True, capture_output=True)
+            self.console.print("[green]📚 Git repository initialized[/green]")
+            
+            # Create .gitignore
+            gitignore_content = """
+node_modules/
+.next/
+.env.local
+.env
+dist/
+build/*
+*.log
+.DS_Store
+.vscode/
+.idea/
+coverage/
+.nyc_output/
+            """.strip()
+            
+            with open(".gitignore", "w") as f:
+                f.write(gitignore_content)
+            
+            # Configure git user if not already configured
+            try:
+                subprocess.run(["git", "config", "user.name"], check=True, capture_output=True)
+            except:
+                subprocess.run(["git", "config", "user.name", "AutonomyBot"], check=True)
+                subprocess.run(["git", "config", "user.email", "autonomybot@example.com"], check=True)
+            
+            # Add all files
+            subprocess.run(["git", "add", "."], check=True, capture_output=True)
+            
+            # Initial commit
+            commit_msg = f"🚀 Initial commit for {project_name} generated by AutonomyBot Ultra"
+            subprocess.run(["git", "commit", "-m", commit_msg], check=True, capture_output=True)
+            self.console.print("[green]💾 Initial commit created[/green]")
+            
+            # Push to GitHub if URL provided
+            if repo_url:
+                try:
+                    subprocess.run(["git", "remote", "add", "origin", repo_url], check=True, capture_output=True)
+                    subprocess.run(["git", "branch", "-M", "main"], check=True, capture_output=True)
+                    subprocess.run(["git", "push", "-u", "origin", "main"], check=True, capture_output=True)
+                    self.console.print(f"[green]🚀 Code pushed to {repo_url}[/green]")
+                    return True
+                except subprocess.CalledProcessError as e:
+                    self.console.print(f"[yellow]⚠️ Git push failed: {e}. You can push manually later.[/yellow]")
+                    return False
+            
+            os.chdir(original_dir)
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            self.console.print(f"[red]❌ Git setup failed: {e}[/red]")
+            return False
+        except Exception as e:
+            self.console.print(f"[red]❌ Unexpected error in git setup: {e}[/red]")
+            return False
+
+# --- Main Bot Class ---
+class AutonomyBotUltra:
+    def __init__(self, ollama_url: str = "http://localhost:11434"):
+        """Initialize the AutonomyBot Ultra agent."""
+        self.console = Console()
+        self.ollama_url = ollama_url
+        self.primary_model = "deepseek-coder:33b"
+        self.code_review_model = "codellama:34b"
+        self.memory = BotMemory()
+        self.plugins = PluginManager()
+        self.project_path: Optional[Path] = None
+        self.files: Dict[str, str] = {}
+        self.github_inspiration = GitHubInspiration(self.console)
+        self.git_manager = GitManager(self.console)
+
+    def check_ollama_models(self) -> bool:
+        """Check if both required Ollama models are available."""
+        try:
+            response = requests.get(f"{self.ollama_url}/api/tags")
+            if response.status_code == 200:
+                models = response.json().get('models', [])
+                available_models = [model['name'] for model in models]
+                missing = [m for m in [self.primary_model, self.code_review_model] if m not in available_models]
+                if missing:
+                    self.console.print(f"[red]Missing Ollama models: {', '.join(missing)}[/red]")
+                    self.console.print("[yellow]Please run: ollama pull <model_name> for each missing model.")
+                    return False
+                return True
+            else:
+                self.console.print(f"[red]Ollama API error: {response.status_code}")
+                return False
+        except Exception as e:
+            self.console.print(f"[red]Cannot connect to Ollama: {e}")
+            return False
+
+    def display_banner(self):
+        """Display the AutonomyBot Ultra banner."""
+        banner = """
+╔═══════════════════════════════════════════════════════════════╗
+║                  🤖 AUTONOMYBOT ULTRA 🤖                      ║
+║   Conversational Coding Agent - Build, Fix, Explain, Repeat  ║
+╚═══════════════════════════════════════════════════════════════╝
+        """
+        self.console.print(Panel(banner, style="bold cyan"))
+        self.console.print("[bold green]Welcome![/bold green] I can build, fix, and explain modern web projects from your prompts.\n")
+
+    def call_llm(self, prompt: str, model: Optional[str] = None, system_prompt: str = "") -> str:
+        """Call the Ollama LLM with the given prompt."""
+        if model is None:
+            model = self.primary_model
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "system": system_prompt,
+            "stream": False,
+            "options": {"temperature": 0.7, "top_p": 0.9, "top_k": 40}
+        }
+        try:
+            self.console.print(f"[yellow]🤔 Thinking with {model}...[/yellow]")
+            response = requests.post(f"{self.ollama_url}/api/generate", json=payload, timeout=120)
+            if response.status_code == 200:
+                return response.json().get("response", "")
+            else:
+                self.console.print(f"[red]❌ LLM Error: {response.status_code}[/red]")
+                return ""
+        except Exception as e:
+            self.console.print(f"[red]❌ Failed to call LLM: {e}[/red]")
+            return ""
+
+    def conversational_loop(self):
+        """Main conversational loop for user interaction."""
+        if not self.check_ollama_models():
+            self.console.print("[red]Ollama models are not ready. Exiting.")
+            sys.exit(1)
+            
+        self.console.print("[bold blue]Let's build your project![/bold blue]")
+        
+        requirements = self.memory.recall('requirements')
+        if not requirements:
+            requirements = self.gather_requirements()
+            self.memory.remember('requirements', requirements)
+            
+        project_plan = self.memory.recall('project_plan')
+        if not project_plan:
+            project_plan = self.generate_project_plan(requirements)
+            self.memory.remember('project_plan', project_plan)
+            
+        self.project_path = Path(self.create_project_structure(requirements['project_name'], project_plan))
+        self.memory.remember('project_path', str(self.project_path))
+        self.console.print("[green]Project structure created.[/green]")
+        
+        self.generate_and_write_code(requirements, project_plan)
+        self.console.print("[green]Initial code generated.[/green]")
+        
+        self.quality_and_build_cycle()
+        
+        # Setup Git repository if requested
+        if requirements.get('setup_git', False):
+            self.console.print("[blue]Setting up Git repository...[/blue]")
+            success = self.git_manager.setup_git_repository(
+                self.project_path, 
+                requirements['project_name'],
+                requirements.get('repo_url')
+            )
+            if success:
+                self.console.print("[green]✅ Git repository setup complete![/green]")
+        
+        # Final success message
+        self.console.print(f"\n[bold green]🎉 SUCCESS! Your website '{requirements['project_name']}' has been generated![\/bold green]")
+        self.console.print(f"[green]📁 Project location: {self.project_path}[\/green]")
+        self.console.print("\n[bold yellow]🚀 Next steps:[\/bold yellow]")
+        self.console.print(f"1. cd \"{self.project_path.name}\"")
+        self.console.print("2. npm install")
+        self.console.print("3. npm run dev")
+        if requirements.get('repo_url'):
+            self.console.print(f"4. Your code is available at: {requirements['repo_url']}")
+        
+        # Main conversational loop
+        while True:
+            self.console.print("\n[bold magenta]What would you like to do next?[\/bold magenta]")
+            self.console.print("- [cyan]Add feature[\/cyan]\n- [cyan]Fix bug[\/cyan]\n- [cyan]Refactor[\/cyan]\n- [cyan]Explain code[\/cyan]\n- [cyan]Show summary[\/cyan]\n- [cyan]Push to Git[\/cyan]\n- [cyan]Exit[\/cyan]")
+            action = Prompt.ask("[bold yellow]Your prompt[\/bold yellow]").strip().lower()
+            
+            if action in ("exit", "quit"): 
+                break
+            elif "feature" in action:
+                self.add_feature()
+            elif "bug" in action or "fix" in action:
+                self.fix_bug()
+            elif "refactor" in action:
+                self.refactor_code()
+            elif "explain" in action:
+                self.explain_code()
+            elif "summary" in action:
+                self.show_summary()
+            elif "git" in action or "push" in action:
+                self.push_to_git()
+            else:
+                self.console.print("[red]Unknown command. Try again.[/red]")
+                
+        self.get_user_feedback()
+
+    def run_lint_and_format(self):
+        """Run ESLint and Prettier on the project."""
+        if self.project_path is None:
+            self.console.print("[red]Project path is not set. Cannot lint/format.")
+            return
+        self.console.print("[yellow]Running ESLint and Prettier...[\/yellow]")
+        try:
+            subprocess.run(["npx", "eslint", ".", "--fix"], cwd=self.project_path, capture_output=True, text=True, timeout=120)
+            subprocess.run(["npx", "prettier", "--write", "."], cwd=self.project_path, capture_output=True, text=True, timeout=120)
+            self.console.print("[green]Linting and formatting complete.[/green]")
+        except Exception as e:
+            self.console.print(f"[red]Lint/format failed: {e}[/red]")
+
+    def run_type_check(self):
+        """Run TypeScript type check on the project."""
+        if self.project_path is None:
+            self.console.print("[red]Project path is not set. Cannot type check.")
+            return
+        self.console.print("[yellow]Running TypeScript type check...[\/yellow]")
+        try:
+            subprocess.run(["npx", "tsc", "--noEmit"], cwd=self.project_path, capture_output=True, text=True, timeout=120)
+            self.console.print("[green]Type check complete.[/green]")
+        except Exception as e:
+            self.console.print(f"[red]Type check failed: {e}[/red]")
+
+    def run_build_and_test(self) -> Tuple[bool, str]:
+        """Run npm install and build, returning (success, log)."""
+        if self.project_path is None:
+            self.console.print("[red]Project path is not set. Cannot build/test.")
+            return False, "No project path."
+        self.console.print("[yellow]Running npm install and build...[\/yellow]")
+        try:
+            install = subprocess.run(["npm", "install"], cwd=self.project_path, capture_output=True, text=True, timeout=300)
+            if install.returncode != 0:
+                return False, install.stderr
+            build = subprocess.run(["npm", "run", "build"], cwd=self.project_path, capture_output=True, text=True, timeout=300)
+            if build.returncode != 0:
+                return False, build.stderr
+            return True, ""
+        except Exception as e:
+            return False, str(e)
+
+    def self_heal(self, build_log: str):
+        """Attempt to fix build errors using the LLM."""
+        if self.project_path is None:
+            self.console.print("[red]Project path is not set. Cannot self-heal.")
+            return
+        requirements = self.memory.recall('requirements')
+        project_plan = self.memory.recall('project_plan')
+        system_prompt = "You are a senior developer. Fix the build error below. Return a JSON object with file paths as keys and updated code as values."
+        prompt = f"Build Error Log:\n{build_log}\nCurrent project context: {json.dumps(requirements)}\n{json.dumps(project_plan)}"
+        response = self.call_llm(prompt, model=self.primary_model, system_prompt=system_prompt)
+        try:
+            updated_files = json.loads(response)
+            self.files.update(updated_files)
+            self.write_files_to_disk(self.project_path, updated_files)
+            self.console.print("[green]Applied self-healing fixes. Retesting...[\/green]")
+            build_success, build_log = self.run_build_and_test()
+            if build_success:
+                self.console.print("[green]Build fixed![\/green]")
+            else:
+                self.console.print("[red]Build still failing. Please review manually.[\/red]")
+        except Exception as e:
+            self.console.print(f"[red]Self-healing failed: {e}[/red]")
+
+    def add_feature(self):
+        """Add a new feature to the project using the LLM."""
+        if self.project_path is None:
+            self.console.print("[red]Project path is not set. Cannot add feature.")
+            return
+        feature = Prompt.ask("[green]Describe the feature to add[\/green]")
+        requirements = self.memory.recall('requirements')
+        project_plan = self.memory.recall('project_plan')
+        system_prompt = "You are a senior developer. Add the described feature. Return a JSON object with file paths as keys and updated code as values."
+        prompt = f"Feature: {feature}\nProject context: {json.dumps(requirements)}\n{json.dumps(project_plan)}"
+        response = self.call_llm(prompt, model=self.primary_model, system_prompt=system_prompt)
+        try:
+            updated_files = json.loads(response)
+            self.files.update(updated_files)
+            self.write_files_to_disk(self.project_path, updated_files)
+            self.console.print("[green]Feature added![\/green]")
+            self.quality_and_build_cycle()
+        except Exception as e:
+            self.console.print(f"[red]Failed to add feature: {e}[/red]")
+
+    def fix_bug(self):
+        """Fix a bug in the project using the LLM."""
+        if self.project_path is None:
+            self.console.print("[red]Project path is not set. Cannot fix bug.")
+            return
+        bug = Prompt.ask("[green]Describe the bug or paste the error message[\/green]")
+        requirements = self.memory.recall('requirements')
+        project_plan = self.memory.recall('project_plan')
+        system_prompt = "You are a senior developer. Fix the described bug. Return a JSON object with file paths as keys and updated code as values."
+        prompt = f"Bug/Error: {bug}\nProject context: {json.dumps(requirements)}\n{json.dumps(project_plan)}"
+        response = self.call_llm(prompt, model=self.primary_model, system_prompt=system_prompt)
+        try:
+            updated_files = json.loads(response)
+            self.files.update(updated_files)
+            self.write_files_to_disk(self.project_path, updated_files)
+            self.console.print("[green]Bug fixed![\/green]")
+            self.quality_and_build_cycle()
+        except Exception as e:
+            self.console.print(f"[red]Failed to fix bug: {e}[/red]")
+
+    def refactor_code(self):
+        """Refactor code in the project using the LLM."""
+        if self.project_path is None:
+            self.console.print("[red]Project path is not set. Cannot refactor.")
+            return
+        refactor = Prompt.ask("[green]Describe the refactor you want[\/green]")
+        requirements = self.memory.recall('requirements')
+        project_plan = self.memory.recall('project_plan')
+        system_prompt = "You are a senior developer. Refactor as described. Return a JSON object with file paths as keys and updated code as values."
+        prompt = f"Refactor: {refactor}\nProject context: {json.dumps(requirements)}\n{json.dumps(project_plan)}"
+        response = self.call_llm(prompt, model=self.primary_model, system_prompt=system_prompt)
+        try:
+            updated_files = json.loads(response)
+            self.files.update(updated_files)
+            self.write_files_to_disk(self.project_path, updated_files)
+            self.console.print("[green]Refactor complete![\/green]")
+            self.quality_and_build_cycle()
+        except Exception as e:
+            self.console.print(f"[red]Failed to refactor: {e}[/red]")
+
+    def explain_code(self):
+        """Explain a code file using the LLM."""
+        if self.project_path is None:
+            self.console.print("[red]Project path is not set. Cannot explain code.")
+            return
+        file_to_explain = Prompt.ask("[green]Enter the file path to explain (relative to project root)[/green]")
+        file_path = Path(self.project_path) / file_to_explain
+        if not file_path.exists():
+            self.console.print(f"[red]File not found: {file_to_explain}[/red]")
+            return
+        with open(file_path, 'r', encoding='utf-8') as f:
+            code = f.read()
+        system_prompt = "You are a senior developer. Explain the code in detail for a developer learning this project."
+        prompt = f"Explain this code file: {file_to_explain}\n\n{code}"
+        explanation = self.call_llm(prompt, model=self.code_review_model, system_prompt=system_prompt)
+        self.console.print(Panel(explanation, title=f"Explanation: {file_to_explain}", style="cyan"))
+
+    def show_summary(self):
+        """Show a summary of the project requirements and plan."""
+        requirements = self.memory.recall('requirements')
+        project_plan = self.memory.recall('project_plan')
+        if requirements is None or project_plan is None:
+            self.console.print("[red]Project requirements or plan not set. Cannot show summary.")
+            return
+        table = Table(title="Project Context")
+        table.add_column("Key")
+        table.add_column("Value")
+        for k, v in requirements.items():
+            table.add_row(k, str(v))
+        self.console.print(table)
+        table2 = Table(title="Project Plan")
+        table2.add_column("Key")
+        table2.add_column("Value")
+        for k, v in project_plan.items():
+            table2.add_row(k, str(v))
+        self.console.print(table2)
+
+    def get_user_feedback(self):
+        """Prompt the user for feedback and store it."""
+        feedback = Prompt.ask("[yellow]Any feedback to help me improve?[/yellow]", default="")
+        if feedback:
+            self.memory.add_feedback(feedback)
+            with open("autonomybot_ultra_feedback.json", "a", encoding="utf-8") as f:
+                json.dump({"timestamp": time.time(), "feedback": feedback}, f)
+                f.write("\n")
+        self.console.print("[bold cyan]Goodbye![\/bold cyan]")
+
+    def run(self):
+        """Run the AutonomyBot Ultra agent."""
+        self.display_banner()
+        self.conversational_loop()
+
+if __name__ == "__main__":
+    bot = AutonomyBotUltra()
+    bot.run()
