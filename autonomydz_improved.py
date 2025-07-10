@@ -418,9 +418,12 @@ module.exports = {
                     },
                     "scripts": {
                         "start": "react-scripts start",
-                        "build": "react-scripts build",
+                        "build": "react-scripts build --legacy-peer-deps",
                         "test": "react-scripts test",
                         "eject": "react-scripts eject"
+                    },
+                    "devDependencies": {
+                        "typescript": "^4.9.5"
                     }
                 },
                 "files": {
@@ -694,7 +697,7 @@ Please enhance the code to include the requested features and improve the overal
                 task = progress.add_task("Installing dependencies...", total=None)
                 
                 process = await asyncio.create_subprocess_exec(
-                    "npm", "install",
+                    "npm", "install", "--legacy-peer-deps",
                     cwd=project_path,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
